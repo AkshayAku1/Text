@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>P2P Chat - Akshay & Friend</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: sans-serif; padding: 10px; background: #f0f0f0; }
+    #chat { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: auto; background: #fff; }
+    input, button { padding: 8px; margin: 5px 0; width: 100%; }
+    #msg { width: 75%; display: inline-block; }
+    #send { width: 23%; display: inline-block; }
+  </style>
+</head>
+<body>
+  <h2>🔒 Private P2P Chat</h2>
+
+  <input id="room" placeholder="Enter Room ID (e.g., akshay123)" />
+  <button onclick="join()">Join Chat Room</button>
+
+  <div id="chat" hidden></div>
+
+  <div hidden id="controls">
+    <input id="msg" placeholder="Type message..." />
+    <button id="send">Send</button>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+  <script>
+    // TODO: Replace with your Firebase config
+    const firebaseConfig = {
+	    apiKey: "AIzaSyDcM2LPiuRgwIfhnnmnIXcRg0mMmMh8Sqw",
+  authDomain: "chat-bf44b.firebaseapp.com",
+  projectId: "chat-bf44b",
+  storageBucket: "chat-bf44b.firebasestorage.app",
+  messagingSenderId: "781769559526",
+  appId: "1:781769559526:web:dc684bfbe50eed0d3a1a27",
+  measurementId: "G-5E0N0CLLKB"
+
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let localConn, channel;
+    let isHost = false;
+
+    const roomInput = document.getElementById('room');
+    const chat = document.getElementById('chat');
+    const controls = document.getElementById('controls');
+
+    function join() {
+      const roomId = roomInput.value.trim();
+      if (!roomId) return alert("Please enter a room ID.");
+      const roomRef = db.ref('rooms/' + roomId);
+      chat.hidden = false;
+      controls.hidden = false;
+
+      localConn = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+
+      localConn.onicecandidate = e => {
+        if (e.candidate) {
+          roomRef.child(isHost ? 'hostIce' : 'guestIce').push(JSON.stringify(e.candidate));
+        }
+      };
+
+      localConn.ondatachannel = e => {
+        channel = e.channel;
+        setupChannel();
+      };
+
+      roomRef.once('value', async snap => {
+        if (snap.exists()) {
+          // Join as guest
+          isHost = false;
+          const offer = JSON.parse(snap.val().offer);
+          await localConn.setRemoteDescription(offer);
+          const answer = await localConn.createAnswer();
+          await localConn.setLocalDescription(answer);
+          roomRef.update({ answer: JSON.stringify(answer) });
+
+          roomRef.child('hostIce').on('child_added', d => {
+            localConn.addIceCandidate(new RTCIceCandidate(JSON.parse(d.val())));
+          });
+        } else {
+          // Host
+          isHost = true;
+          channel = localConn.createDataChannel('chat');
+          setupChannel();
+
+          const offer = await localConn.createOffer();
+          await localConn.setLocalDescription(offer);
+          roomRef.set({ offer: JSON.stringify(offer) });
+
+          roomRef.child('answer').on('value', async d => {
+            if (d.exists()) {
+              const answer = JSON.parse(d.val());
+              await localConn.setRemoteDescription(answer);
+            }
+          });
+
+          roomRef.child('guestIce').on('child_added', d => {
+            localConn.addIceCandidate(new RTCIceCandidate(JSON.parse(d.val())));
+          });
+        }
+      });
+    }
+
+    function setupChannel() {
+      channel.onmessage = e => {
+        const p = document.createElement('p');
+        p.textContent = "👤 Friend: " + e.data;
+        chat.appendChild(p);
+        chat.scrollTop = chat.scrollHeight;
+      };
+
+      document.getElementById('send').onclick = () => {
+        const val = document.getElementById('msg').value;
+        if (!val) return;
+        channel.send(val);
+        const p = document.createElement('p');
+        p.textContent = "🧑 You: " + val;
+        chat.appendChild(p);
+        chat.scrollTop = chat.scrollHeight;
+        document.getElementById('msg').value = '';
+      };
+    }
+  </script>
+</body>
+</html>
